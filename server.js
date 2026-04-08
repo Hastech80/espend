@@ -46,7 +46,15 @@ const swaggerSpec = swaggerJsdoc({
       version: "1.0.0",
     },
     /* servers: [{ url: `http://localhost:${PORT}/api/v1` }], */
-    servers: [{ url: `https://espend.onrender.com/api/v1` }],
+    const isProd = process.env.NODE_ENV === "production";
+
+servers: [
+  {
+    url: isProd
+      ? "https://espend.onrender.com/api/v1"
+      : `http://localhost:${PORT}/api/v1`
+  }
+]
   },
   apis: ["./server.js"],
 });

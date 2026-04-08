@@ -38,6 +38,8 @@ client.connect()
   .catch(err => console.error("❌ DB Error:", err));
 
 /* ================= SWAGGER ================= */
+const isProd = process.env.NODE_ENV === "production";
+
 const swaggerSpec = swaggerJsdoc({
   definition: {
     openapi: "3.0.0",
@@ -45,16 +47,13 @@ const swaggerSpec = swaggerJsdoc({
       title: "ESpend API",
       version: "1.0.0",
     },
-    /* servers: [{ url: `http://localhost:${PORT}/api/v1` }], */
-    const isProd = process.env.NODE_ENV === "production";
-
-servers: [
-  {
-    url: isProd
-      ? "https://espend.onrender.com/api/v1"
-      : `http://localhost:${PORT}/api/v1`
-  }
-]
+    servers: [
+      {
+        url: isProd
+          ? "https://espend.onrender.com/api/v1"
+          : `http://localhost:${PORT}/api/v1`
+      }
+    ]
   },
   apis: ["./server.js"],
 });

@@ -45,7 +45,8 @@ const swaggerSpec = swaggerJsdoc({
       title: "ESpend API",
       version: "1.0.0",
     },
-    servers: [{ url: `http://localhost:${PORT}/api/v1` }],
+    /* servers: [{ url: `http://localhost:${PORT}/api/v1` }], */
+    servers: [{ url: `https://espend.onrender.com/api/v1` }],
   },
   apis: ["./server.js"],
 });

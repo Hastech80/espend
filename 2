@@ -1,0 +1,255 @@
+const express = require('express');
+const { Client } = require('pg');
+const jwt = require('jsonwebtoken');
+const swaggerUi = require('swagger-ui-express');
+const swaggerJsdoc = require('swagger-jsdoc');
+
+const app = express();
+app.use(express.json());
+
+/* ================= CONFIG ================= */
+const PORT = 5000;
+const JWT_SECRET = "supersecret";
+
+/* ================= DB ================= */
+const client = new Client({
+  user: "postgres",
+  host: "localhost",
+  database: "first",
+  password: "hassan1212",
+  port: 5432,
+});
+client.connect();
+
+/* ================= SWAGGER ================= */
+const swaggerSpec = swaggerJsdoc({
+  definition: {
+    openapi: "3.0.0",
+    info: { title: "ESpend API", version: "1.0.0" },
+    servers: [{ url: `http://localhost:${PORT}/api/v1` }],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer"
+        }
+      }
+    }
+  },
+  apis: ["./server.js"]
+});
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+/* ================= MIDDLEWARE ================= */
+const auth = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).json({ message: "Invalid token" });
+  }
+};
+
+/* ================= SCAN VALIDATE ================= */
+
+/**
+ * @swagger
+ * /scan/validate:
+ *   post:
+ *     summary: Validate QR and credit wallet
+ *     tags: [Scan]
+ *     security:
+ *       - bearerAuth: []
+ */
+app.post('/api/v1/scan/validate', auth, async (req, res) => {
+  const { qrCode, location, deviceId } = req.body;
+
+  // simulate QR value
+  const amount = 50;
+
+  await client.query("BEGIN");
+
+  try {
+    // insert scan
+    const scan = await client.query(
+      `INSERT INTO scans(user_id, qr_code, amount)
+       VALUES($1,$2,$3) RETURNING *`,
+      [req.user.id, qrCode, amount]
+    );
+
+    // credit wallet
+    await client.query(
+      `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id=$2`,
+      [amount, req.user.id]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      success: true,
+      amountCredited: amount
+    });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ================= SCAN HISTORY ================= */
+
+/**
+ * @swagger
+ * /scan/history:
+ *   get:
+ *     summary: Get scan history
+ *     tags: [Scan]
+ */
+app.get('/api/v1/scan/history', auth, async (req, res) => {
+  const { page = 1, limit = 10 } = req.query;
+  const offset = (page - 1) * limit;
+
+  const scans = await client.query(
+    `SELECT * FROM scans WHERE user_id=$1
+     ORDER BY created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [req.user.id, limit, offset]
+  );
+
+  res.json({
+    scans: scans.rows,
+    pagination: { page, limit }
+  });
+});
+
+/* ================= WALLET BALANCE ================= */
+
+/**
+ * @swagger
+ * /wallet/balance:
+ *   get:
+ *     summary: Get wallet balance
+ *     tags: [Wallet]
+ */
+app.get('/api/v1/wallet/balance', auth, async (req, res) => {
+  const user = await client.query(
+    "SELECT wallet_balance FROM users WHERE id=$1",
+    [req.user.id]
+  );
+
+  res.json({ balance: user.rows[0].wallet_balance });
+});
+
+/* ================= WALLET WITHDRAW ================= */
+
+/**
+ * @swagger
+ * /wallet/withdraw:
+ *   post:
+ *     summary: Withdraw money
+ *     tags: [Wallet]
+ */
+app.post('/api/v1/wallet/withdraw', auth, async (req, res) => {
+  const { amount } = req.body;
+
+  await client.query("BEGIN");
+
+  try {
+    const user = await client.query(
+      "SELECT wallet_balance FROM users WHERE id=$1",
+      [req.user.id]
+    );
+
+    if (user.rows[0].wallet_balance < amount) {
+      throw new Error("Insufficient balance");
+    }
+
+    await client.query(
+      "UPDATE users SET wallet_balance = wallet_balance - $1 WHERE id=$2",
+      [amount, req.user.id]
+    );
+
+    await client.query(
+      `INSERT INTO withdrawals(user_id, amount, status)
+       VALUES($1,$2,'pending')`,
+      [req.user.id, amount]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({ status: "pending" });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/* ================= TRANSACTIONS ================= */
+
+/**
+ * @swagger
+ * /wallet/transactions:
+ *   get:
+ *     summary: Get wallet transactions
+ *     tags: [Wallet]
+ */
+app.get('/api/v1/wallet/transactions', auth, async (req, res) => {
+  const { page = 1, limit = 10 } = req.query;
+
+  const result = await client.query(
+    `SELECT * FROM withdrawals WHERE user_id=$1
+     LIMIT $2 OFFSET $3`,
+    [req.user.id, limit, (page - 1) * limit]
+  );
+
+  res.json({
+    transactions: result.rows
+  });
+});
+
+/* ================= REFERRAL ================= */
+
+/**
+ * @swagger
+ * /referral/apply:
+ *   post:
+ *     summary: Apply referral code
+ *     tags: [Referral]
+ */
+app.post('/api/v1/referral/apply', auth, async (req, res) => {
+  const { referralCode } = req.body;
+
+  await client.query(
+    "UPDATE users SET referral_code=$1 WHERE id=$2",
+    [referralCode, req.user.id]
+  );
+
+  res.json({ success: true });
+});
+
+/* ================= NOTIFICATIONS ================= */
+
+/**
+ * @swagger
+ * /notifications:
+ *   get:
+ *     summary: Get notifications
+ *     tags: [Notifications]
+ */
+app.get('/api/v1/notifications', auth, async (req, res) => {
+  const result = await client.query(
+    "SELECT * FROM notifications WHERE user_id=$1",
+    [req.user.id]
+  );
+
+  res.json({ notifications: result.rows });
+});
+
+/* ================= SERVER ================= */
+app.listen(PORT, () => {
+  console.log(`Server running on ${PORT}`);
+});

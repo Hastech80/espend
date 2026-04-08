@@ -427,7 +427,9 @@ app.post('/api/v1/auth/admin/login', (req, res) => {
 
 
 
-
+app.get('/', (req, res) => {
+  res.send('API is running...');
+});
 /* ================= SERVER ================= */
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);

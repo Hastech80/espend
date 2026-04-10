@@ -94,6 +94,86 @@ const generateToken = (payload) =>
       password TEXT,
       status TEXT DEFAULT 'pending'
     );
+
+      CREATE TABLE IF NOT EXISTS qr_codes (
+    id UUID PRIMARY KEY,
+    campaign_id UUID,
+    code TEXT,
+    scans INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+    /* ================= ANALYTICS ================= */
+  CREATE TABLE IF NOT EXISTS analytics (
+    id SERIAL PRIMARY KEY,
+    campaign_id UUID,
+    scans INT DEFAULT 0,
+    conversions INT DEFAULT 0,
+    revenue NUMERIC DEFAULT 0
+  );
+
+  /* ================= TRANSACTIONS ================= */
+  CREATE TABLE IF NOT EXISTS transactions (
+    id UUID PRIMARY KEY,
+    vendor_id UUID,
+    type TEXT, -- deposit, debit, refund
+    amount NUMERIC,
+    status TEXT DEFAULT 'pending',
+    reference TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  /* ================= WALLET LEDGER (VERY IMPORTANT) ================= */
+  CREATE TABLE IF NOT EXISTS wallet_ledger (
+    id SERIAL PRIMARY KEY,
+    vendor_id UUID,
+    transaction_id UUID,
+    credit NUMERIC DEFAULT 0,
+    debit NUMERIC DEFAULT 0,
+    balance NUMERIC,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  /* ================= PRODUCTS ================= */
+  CREATE TABLE IF NOT EXISTS products (
+    id UUID PRIMARY KEY,
+    vendor_id UUID,
+    name TEXT,
+    description TEXT,
+    price NUMERIC,
+    status TEXT DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  /* ================= CAMPAIGNS ================= */
+  CREATE TABLE IF NOT EXISTS campaigns (
+    id UUID PRIMARY KEY,
+    vendor_id UUID,
+    product_id UUID,
+    budget NUMERIC,
+    remaining NUMERIC,
+    status TEXT DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  /* ================= QR CODES ================= */
+  CREATE TABLE IF NOT EXISTS qr_codes (
+    id UUID PRIMARY KEY,
+    campaign_id UUID,
+    code TEXT,
+    scans INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  /* ================= ANALYTICS ================= */
+  CREATE TABLE IF NOT EXISTS analytics (
+    id SERIAL PRIMARY KEY,
+    campaign_id UUID,
+    scans INT DEFAULT 0,
+    conversions INT DEFAULT 0,
+    revenue NUMERIC DEFAULT 0
+  );
+  
   `);
 })();
 
@@ -423,7 +503,379 @@ app.post('/api/v1/auth/admin/login', (req, res) => {
 });
 
 
+// new code
+/**
+ * @swagger
+ * /api/v1/vendor/profile:
+ *   get:
+ *     summary: Get vendor profile
+ *     parameters:
+ *       - in: query
+ *         name: vendorId
+ *         required: true
+ *         schema:
+ *           type: string
+ */
+app.get('/api/v1/vendor/profile', async (req, res) => {
+  const { vendorId } = req.query;
 
+  const result = await client.query(
+    "SELECT id, company_name, email, phone, status FROM vendors WHERE id=$1",
+    [vendorId]
+  );
+
+  res.json(result.rows[0]);
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/profile:
+ *   put:
+ *     summary: Update vendor profile
+ */
+app.put('/api/v1/vendor/profile', async (req, res) => {
+  const { vendorId, companyName, email, phone } = req.body;
+
+  await client.query(
+    `UPDATE vendors 
+     SET company_name=$1, email=$2, phone=$3 
+     WHERE id=$4`,
+    [companyName, email, phone, vendorId]
+  );
+
+  res.json({ message: "Profile updated" });
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/documents:
+ *   post:
+ *     summary: Upload verification documents
+ */
+app.post('/api/v1/vendor/documents', async (req, res) => {
+  const { vendorId, documentType, fileUrl, description } = req.body;
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS vendor_documents(
+      id SERIAL PRIMARY KEY,
+      vendor_id UUID,
+      document_type TEXT,
+      file_url TEXT,
+      description TEXT,
+      status TEXT DEFAULT 'pending'
+    )
+  `);
+
+  await client.query(
+    `INSERT INTO vendor_documents(vendor_id, document_type, file_url, description)
+     VALUES($1,$2,$3,$4)`,
+    [vendorId, documentType, fileUrl, description]
+  );
+
+  res.json({ message: "Document uploaded" });
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/documents:
+ *   get:
+ *     summary: Get vendor documents
+ */
+app.get('/api/v1/vendor/documents', async (req, res) => {
+  const { vendorId } = req.query;
+
+  const docs = await client.query(
+    "SELECT * FROM vendor_documents WHERE vendor_id=$1",
+    [vendorId]
+  );
+
+  res.json(docs.rows);
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/wallet:
+ *   get:
+ *     summary: Get vendor wallet
+ */
+app.get('/api/v1/vendor/wallet', async (req, res) => {
+  const { vendorId } = req.query;
+
+  const wallet = await client.query(
+    "SELECT wallet_balance FROM users WHERE id=$1",
+    [vendorId]
+  );
+
+  res.json({ balance: wallet.rows[0]?.wallet_balance || 0 });
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/wallet/transactions:
+ *   get:
+ *     summary: Get vendor transactions
+ */
+app.get('/api/v1/vendor/wallet/transactions', async (req, res) => {
+  const { vendorId } = req.query;
+
+  const tx = await client.query(`
+    SELECT * FROM transactions WHERE vendor_id=$1 ORDER BY created_at DESC
+  `, [vendorId]);
+
+  res.json(tx.rows);
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/products:
+ *   post:
+ *     summary: Create product
+ */
+app.post('/api/v1/vendor/products', async (req, res) => {
+  const { vendorId, name, price, description } = req.body;
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS products(
+      id UUID PRIMARY KEY,
+      vendor_id UUID,
+      name TEXT,
+      price NUMERIC,
+      description TEXT
+    )
+  `);
+
+  const product = await client.query(
+    `INSERT INTO products(id, vendor_id, name, price, description)
+     VALUES($1,$2,$3,$4,$5) RETURNING *`,
+    [randomUUID(), vendorId, name, price, description]
+  );
+
+  res.json(product.rows[0]);
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/products:
+ *   post:
+ *     summary: Create product
+ */
+app.post('/api/v1/vendor/products', async (req, res) => {
+  const { vendorId, name, price, description } = req.body;
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS products(
+      id UUID PRIMARY KEY,
+      vendor_id UUID,
+      name TEXT,
+      price NUMERIC,
+      description TEXT
+    )
+  `);
+
+  const product = await client.query(
+    `INSERT INTO products(id, vendor_id, name, price, description)
+     VALUES($1,$2,$3,$4,$5) RETURNING *`,
+    [randomUUID(), vendorId, name, price, description]
+  );
+
+  res.json(product.rows[0]);
+});
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/products:
+ *   get:
+ *     summary: Get vendor products
+ */
+app.get('/api/v1/vendor/products', async (req, res) => {
+  const { vendorId } = req.query;
+
+  const products = await client.query(
+    "SELECT * FROM products WHERE vendor_id=$1",
+    [vendorId]
+  );
+
+  res.json(products.rows);
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/products/{productId}:
+ *   get:
+ *     summary: Get product details
+ */
+app.get('/api/v1/vendor/products/:productId', async (req, res) => {
+  const { productId } = req.params;
+
+  const product = await client.query(
+    "SELECT * FROM products WHERE id=$1",
+    [productId]
+  );
+
+  res.json(product.rows[0]);
+});
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/products/{productId}:
+ *   delete:
+ *     summary: Delete product
+ */
+app.delete('/api/v1/vendor/products/:productId', async (req, res) => {
+  const { productId } = req.params;
+
+  await client.query("DELETE FROM products WHERE id=$1", [productId]);
+
+  res.json({ message: "Product deleted" });
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/campaigns:
+ *   post:
+ *     summary: Create campaign
+ */
+app.post('/api/v1/vendor/campaigns', async (req, res) => {
+  const { vendorId, productId, budget } = req.body;
+
+  const campaign = await client.query(
+    `INSERT INTO campaigns(id, vendor_id, product_id, budget, remaining)
+     VALUES($1,$2,$3,$4,$4) RETURNING *`,
+    [randomUUID(), vendorId, productId, budget]
+  );
+
+  res.json(campaign.rows[0]);
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/campaigns:
+ *   get:
+ *     summary: Get campaigns
+ */
+app.get('/api/v1/vendor/campaigns', async (req, res) => {
+  const { vendorId } = req.query;
+
+  const campaigns = await client.query(
+    "SELECT * FROM campaigns WHERE vendor_id=$1",
+    [vendorId]
+  );
+
+  res.json(campaigns.rows);
+});
+/**
+ * @swagger
+ * /api/v1/vendor/campaigns/{campaignId}/pause:
+ *   post:
+ *     summary: Pause campaign
+ */
+app.post('/api/v1/vendor/campaigns/:campaignId/pause', async (req, res) => {
+  const { campaignId } = req.params;
+
+  await client.query(
+    "UPDATE campaigns SET status='paused' WHERE id=$1",
+    [campaignId]
+  );
+
+  res.json({ message: "Campaign paused" });
+});
+
+const QRCode = require('qrcode');
+
+/**
+ * @swagger
+ * /api/v1/vendor/campaigns/{campaignId}/qr:
+ *   post:
+ *     summary: Generate QR code
+ */
+app.post('/api/v1/vendor/campaigns/:campaignId/qr', async (req, res) => {
+  const { campaignId } = req.params;
+
+  const code = randomUUID();
+
+  const qrImage = await QRCode.toDataURL(code);
+
+  await client.query(
+    `INSERT INTO qr_codes(id, campaign_id, code)
+     VALUES($1,$2,$3)`,
+    [randomUUID(), campaignId, code]
+  );
+
+  res.json({
+    qr: qrImage,
+    code
+  });
+});
+
+
+/**
+ * @swagger
+ * /api/v1/scan/{code}:
+ *   get:
+ *     summary: Scan QR code
+ */
+app.get('/api/v1/scan/:code', async (req, res) => {
+  const { code } = req.params;
+
+  const qr = await client.query(
+    "SELECT * FROM qr_codes WHERE code=$1",
+    [code]
+  );
+
+  if (!qr.rows.length) return res.status(404).json({ message: "Invalid QR" });
+
+  await client.query(
+    "UPDATE qr_codes SET scans = scans + 1 WHERE code=$1",
+    [code]
+  );
+
+  res.json({ message: "QR scanned" });
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/analytics:
+ *   get:
+ *     summary: Get analytics
+ */
+app.get('/api/v1/vendor/analytics', async (req, res) => {
+  const { campaignId } = req.query;
+
+  const data = await client.query(
+    "SELECT * FROM analytics WHERE campaign_id=$1",
+    [campaignId]
+  );
+
+  res.json(data.rows[0]);
+});
+
+
+/**
+ * @swagger
+ * /api/v1/payment/webhook:
+ *   post:
+ *     summary: Payment webhook (Novac)
+ */
+app.post('/api/v1/payment/webhook', async (req, res) => {
+  const { reference, amount, status, vendorId } = req.body;
+
+  if (status === "success") {
+    await client.query(
+      "UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id=$2",
+      [amount, vendorId]
+    );
+
+    await client.query(
+      `INSERT INTO transactions(id, vendor_id, amount, status, reference)
+       VALUES($1,$2,$3,$4,$5)`,
+      [randomUUID(), vendorId, amount, "success", reference]
+    );
+  }
+
+  res.json({ received: true });
+});
 
 
 

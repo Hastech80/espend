@@ -18,21 +18,20 @@ const JWT_SECRET = "supersecret";
 
 /* ================= DB ================= */
 
-const client = new Client({
+/* const client = new Client({
   user: "postgres",
   host: "localhost",
   database: "first",
   password: "hassan1212",
   port: 5432,
-});
-
-/* const client = new Client({
+}); */
+ const client = new Client({
   user: "first_ifc9_user",
   host: "dpg-d7b4rdffte5s73d4ggag-a",
   database: "first_ifc9",
   password: "INyriCte0Tmbvxtj4cRCvyBqdrrIdJwE",
   port: 5432,
-}); */
+}); 
 client.connect()
   .then(() => console.log("✅ PostgreSQL Connected"))
   .catch(err => console.error("❌ DB Error:", err));

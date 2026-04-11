@@ -91,7 +91,9 @@ const generateToken = (payload) =>
       email TEXT,
       phone TEXT,
       password TEXT,
-      status TEXT DEFAULT 'pending'
+      status TEXT DEFAULT 'pending',
+      wallet_balance NUMERIC DEFAULT 0,
+      account_number TEXT
     );
 
       CREATE TABLE IF NOT EXISTS qr_codes (
@@ -609,11 +611,13 @@ app.get('/api/v1/vendor/wallet', async (req, res) => {
   const { vendorId } = req.query;
 
   const wallet = await client.query(
-    "SELECT wallet_balance FROM users WHERE id=$1",
+    "SELECT wallet_balance FROM vendors WHERE id=$1",
     [vendorId]
   );
 
-  res.json({ balance: wallet.rows[0]?.wallet_balance || 0 });
+  res.json({
+    balance: wallet.rows[0]?.wallet_balance || 0
+  });
 });
 
 /**
@@ -886,11 +890,351 @@ app.post('/api/v1/payment/webhook', async (req, res) => {
 
 
 
+/**
+ * @swagger
+ * /api/v1/vendor/products/{productId}:
+ *   put:
+ *     summary: Update product
+ */
+app.put('/api/v1/vendor/products/:productId', async (req, res) => {
+  const { productId } = req.params;
+  const { name, description, price, status } = req.body;
+
+  await client.query(
+    `UPDATE products 
+     SET name=$1, description=$2, price=$3, status=$4
+     WHERE id=$5`,
+    [name, description, price, status, productId]
+  );
+
+  res.json({ message: "Product updated" });
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/products/{productId}:
+ *   get:
+ *     summary: Get product details
+ */
+app.get('/api/v1/vendor/products/:productId', async (req, res) => {
+  const { productId } = req.params;
+
+  const product = await client.query(
+    "SELECT * FROM products WHERE id=$1",
+    [productId]
+  );
+
+  res.json({ product: product.rows[0] });
+});
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/campaigns/{campaignId}:
+ *   put:
+ *     summary: Update campaign
+ */
+app.put('/api/v1/vendor/campaigns/:campaignId', async (req, res) => {
+  const { campaignId } = req.params;
+  const { name, status } = req.body;
+
+  await client.query(
+    "UPDATE campaigns SET status=$1 WHERE id=$2",
+    [status, campaignId]
+  );
+
+  res.json({ message: "Campaign updated" });
+});
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/campaigns/{campaignId}/resume:
+ *   post:
+ *     summary: Resume campaign
+ */
+app.post('/api/v1/vendor/campaigns/:campaignId/resume', async (req, res) => {
+  const { campaignId } = req.params;
+
+  await client.query(
+    "UPDATE campaigns SET status='active' WHERE id=$1",
+    [campaignId]
+  );
+
+  res.json({ message: "Campaign resumed" });
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/campaigns/{campaignId}/topup:
+ *   post:
+ *     summary: Top up campaign budget
+ */
+app.post('/api/v1/vendor/campaigns/:campaignId/topup', async (req, res) => {
+  const { campaignId } = req.params;
+  const { additionalAmount } = req.body;
+
+  await client.query(
+    `UPDATE campaigns 
+     SET budget = budget + $1,
+         remaining = remaining + $1
+     WHERE id=$2`,
+    [additionalAmount, campaignId]
+  );
+
+  res.json({ message: "Budget updated" });
+});
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/campaigns/{campaignId}/cancel:
+ *   delete:
+ *     summary: Cancel campaign
+ */
+app.delete('/api/v1/vendor/campaigns/:campaignId/cancel', async (req, res) => {
+  const { campaignId } = req.params;
+
+  await client.query(
+    "UPDATE campaigns SET status='cancelled' WHERE id=$1",
+    [campaignId]
+  );
+
+  res.json({ message: "Campaign cancelled" });
+});
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/campaigns/{campaignId}/qr/download:
+ *   get:
+ *     summary: Download QR codes
+ */
+app.get('/api/v1/vendor/campaigns/:campaignId/qr/download', async (req, res) => {
+  const { campaignId } = req.params;
+
+  const qrs = await client.query(
+    "SELECT * FROM qr_codes WHERE campaign_id=$1",
+    [campaignId]
+  );
+
+  res.json({
+    total: qrs.rows.length,
+    data: qrs.rows
+  });
+});
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/campaigns/{campaignId}/qr/status:
+ *   get:
+ *     summary: QR generation status
+ */
+app.get('/api/v1/vendor/campaigns/:campaignId/qr/status', async (req, res) => {
+  const { campaignId } = req.params;
+
+  const result = await client.query(
+    "SELECT COUNT(*) as total FROM qr_codes WHERE campaign_id=$1",
+    [campaignId]
+  );
+
+  res.json({
+    generated: result.rows[0].total
+  });
+});
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/analytics/dashboard:
+ *   get:
+ *     summary: Dashboard analytics
+ */
+app.get('/api/v1/vendor/analytics/dashboard', async (req, res) => {
+  const { vendorId } = req.query;
+
+  const result = await client.query(`
+    SELECT 
+      COUNT(*) as total_campaigns,
+      SUM(budget) as total_spent
+    FROM campaigns
+    WHERE vendor_id=$1
+  `, [vendorId]);
+
+  res.json(result.rows[0]);
+});
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/analytics/geography:
+ *   get:
+ *     summary: Geography analytics
+ */
+app.get('/api/v1/vendor/analytics/geography', (req, res) => {
+  res.json({
+    locations: [
+      { country: "Nigeria", scans: 120 },
+      { country: "Ghana", scans: 40 }
+    ]
+  });
+});
+
+/**
+ * @swagger
+ * /api/v1/vendor/analytics/roi:
+ *   get:
+ *     summary: ROI analytics
+ */
+app.get('/api/v1/vendor/analytics/roi', async (req, res) => {
+  const { campaignId } = req.query;
+
+  const data = await client.query(
+    "SELECT * FROM analytics WHERE campaign_id=$1",
+    [campaignId]
+  );
+
+  res.json(data.rows[0]);
+});
 
 
 
+/**
+ * @swagger
+ * /api/v1/vendor/reports/fraud:
+ *   get:
+ *     summary: Fraud alerts
+ */
+app.get('/api/v1/vendor/reports/fraud', (req, res) => {
+  res.json({
+    alerts: [
+      { id: 1, type: "suspicious_scans", severity: "high" }
+    ]
+  });
+});
 
 
+
+/**
+ * @swagger
+ * /api/v1/vendor/settings:
+ *   get:
+ *     summary: Get settings
+ */
+app.get('/api/v1/vendor/settings', (req, res) => {
+  res.json({
+    emailNotifications: true,
+    webhookUrl: ""
+  });
+});
+
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/settings:
+ *   put:
+ *     summary: Update settings
+ */
+app.put('/api/v1/vendor/settings', (req, res) => {
+  res.json({ message: "Settings updated" });
+});
+
+
+/**
+ * @swagger
+ * /api/v1/vendor/support/escalate:
+ *   post:
+ *     summary: Escalate issue
+ */
+app.post('/api/v1/vendor/support/escalate', (req, res) => {
+  res.json({
+    ticketId: randomUUID(),
+    message: "Issue escalated"
+  });
+});
+
+
+
+/**
+ * @swagger
+ * /api/v1/payment/webhook:
+ *   post:
+ *     summary: Novac payment webhook
+ */
+app.post('/api/v1/payment/webhook', async (req, res) => {
+  const { reference, amount, status } = req.body;
+
+  try {
+    if (status === "success") {
+
+      const tx = await client.query(
+        "SELECT * FROM transactions WHERE reference=$1",
+        [reference]
+      );
+
+      if (!tx.rows.length) return res.sendStatus(200);
+
+      const vendorId = tx.rows[0].vendor_id;
+
+      // ✅ Update vendor wallet
+      await client.query(
+        "UPDATE vendors SET wallet_balance = wallet_balance + $1 WHERE id=$2",
+        [amount, vendorId]
+      );
+
+      // ✅ Update transaction
+      await client.query(
+        "UPDATE transactions SET status='success' WHERE reference=$1",
+        [reference]
+      );
+    }
+
+    res.sendStatus(200);
+
+  } catch (err) {
+    console.error(err);
+    res.sendStatus(500);
+  }
+});
+
+const axios = require('axios');
+
+/**
+ * @swagger
+ * /api/v1/vendor/wallet/deposit:
+ *   post:
+ *     summary: Initiate wallet deposit
+ */
+app.post('/api/v1/vendor/wallet/deposit', async (req, res) => {
+  const { amount, email } = req.body;
+
+  try {
+    // Example call to novacpayment
+    const response = await axios.post(
+      "https://api.novacpayment.com/initiate",
+      {
+        amount,
+        email,
+        currency: "NGN",
+        callback_url: "https://espend.onrender.com/payment-success"   ////// this is where to redirect after a complete transaction
+      },
+      {
+        headers: {
+          Authorization: "nc_testsk_zd5a0hcu5arga23affflsekuo8ba45qzp3k8"
+        }
+      }
+    );
+
+    res.json({
+      paymentLink: response.data.payment_link
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: "Payment failed" });
+  }
+});   
 
 
 
